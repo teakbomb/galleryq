@@ -1,0 +1,43 @@
+<RCC>
+    <qresource prefix="/">
+        <file>Main.qml</file>
+        <file>ThumbView.qml</file>
+        <file>FullView.qml</file>
+        <file>Thumb.qml</file>
+        <file>ThumbOverlay.qml</file>
+        <file>icons/grid.svg</file>
+        <file>icons/pages.svg</file>
+        <file>icons/play-circle.svg</file>
+        <file>Constants.qml</file>
+        <file>components/CenteredImage.qml</file>
+        <file>components/LoadingSpinner.qml</file>
+        <file>components/Media.qml</file>
+        <file>components/Video.qml</file>
+        <file>components/Divider.qml</file>
+        <file>MetadataView.qml</file>
+        <file>components/ContextMenu.qml</file>
+        <file>icons/cross.svg</file>
+        <file>icons/plus.svg</file>
+        <file>icons/tick.svg</file>
+        <file>Search.qml</file>
+        <file>Bar.qml</file>
+        <file>Suggestions.qml</file>
+        <file>icons/settings.svg</file>
+        <file>icons/trash.svg</file>
+        <file>components/IconButton.qml</file>
+        <file>icons/back.svg</file>
+        <file>Settings.qml</file>
+        <file>components/PopupWindow.qml</file>
+        <file>icons/archive.svg</file>
+        <file>icons/window.svg</file>
+        <file>icons/reply.svg</file>
+        <file>icons/package-variant.svg</file>
+        <file>icons/cube-outline.svg</file>
+        <file>icons/bookshelf.svg</file>
+        <file>icons/bookmark-multiple.svg</file>
+        <file>SettingsSources.qml</file>
+        <file>components/Combo.qml</file>
+        <file>icons/save.svg</file>
+        <file>icons/refresh.svg</file>
+    </qresource>
+</RCC>
