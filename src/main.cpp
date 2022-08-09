@@ -6,14 +6,13 @@
 #include "mpv.h"
 #include "util.h"
 #include "sql.h"
+#include "sql.h"
 #include "storage.h"
 
 #include <QDateTime>
 
 int main(int argc, char *argv[])
 {
-
-
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QGuiApplication app(argc, argv);
     QQmlApplicationEngine engine;
@@ -33,14 +32,16 @@ int main(int argc, char *argv[])
     thread->start();
     Writer::setup();
 
+    Config::instance(QDir::homePath() + QFileInfo("/.config/galleryq/config.json").filePath());
     for(int i = 1; i < argc; i++) {
         qInfo() << argv[i];
-        Writer::addSource(argv[i], Model::COLLECTION);
+        Writer::addSource(Storage::UUID(), argv[i], Model::COLLECTION);
     }
 
     Model m{};
-    ThumbnailProvider* thumbs = new ThumbnailProvider("./thumbs/");
+    ThumbnailProvider* thumbs = new ThumbnailProvider();
     Util util{&m, thumbs};
+    Util::instance(&util);
 
     ctx->setContextProperty("util", &util);
     engine.addImageProvider("thumbnail", thumbs);

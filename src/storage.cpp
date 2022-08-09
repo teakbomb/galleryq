@@ -10,8 +10,8 @@
 #include <QThread>
 #include <QMutex>
 #include <QCollator>
-
-#include "sql.h"
+#include <QFileInfo>
+#include <QDateTime>
 
 Storage::Storage(QObject *parent)
     : QObject{parent}
@@ -30,38 +30,39 @@ void Storage::setup() {
 
     QSqlQuery q(db);
 
-    q.exec("CREATE TABLE files(file INTEGER PRIMARY KEY, parent INTEGER, children INTEGER, path TEXT, type TEXT, tags TEXT);");
-    q.exec("CREATE TABLE metadata(file INTEGER PRIMARY KEY, id INTEGER, parent INTEGER);");
-    q.exec("CREATE TABLE tags(tag TEXT, file INTEGER, PRIMARY KEY (file, tag));");
-    q.exec("CREATE TABLE sources(path TEXT, mode INTEGER);");
-    q.exec("CREATE VIRTUAL TABLE search USING fts5(tags, content=files, content_rowid=file, tokenize=\"unicode61 tokenchars '`~!@#$%^&*_+-=\\;'',./{}|:""<>?'\");");
+    q.exec("CREATE TABLE files(file INT, path TEXT UNIQUE, type TEXT);");
+    q.exec("CREATE TABLE sources(source INT, path TEXT, mode INT, status INT, saved INT);");
 
-    q.exec("CREATE TABLE children_count(file INTEGER PRIMARY KEY, children INTEGER);");
-    q.exec("CREATE TABLE tag_count(tag TEXT PRIMARY KEY, cnt INTEGER);");
+    q.exec("CREATE TABLE nodes(node INT, parent INT, children INT, source INT, file INT, tags TEXT);");
+    q.exec("CREATE TABLE metadata(node INT, id INT, parent INT);");
+    q.exec("CREATE TABLE tags(node INT, tag TEXT, PRIMARY KEY (node, tag));");
+    q.exec("CREATE TABLE tag_count(tag TEXT PRIMARY KEY, cnt INT);");
 
-    q.exec("CREATE INDEX idx_files_parent ON files(parent);");
+    q.exec("CREATE VIRTUAL TABLE search USING fts5(tags, content=nodes, content_rowid=node, tokenize=\"unicode61 tokenchars '`~!@#$%^&*_+-=\\;'',./{}|:""<>?'\");");
+
+    /*q.exec("CREATE INDEX idx_files_parent ON files(parent);");
     q.exec("CREATE INDEX idx_tags_file ON tags(file);");
     q.exec("CREATE INDEX idx_tags_tag ON tags(tag);");
-    q.exec("CREATE INDEX idx_tag_count ON tag_count(tag);");
+    q.exec("CREATE INDEX idx_tag_count ON tag_count(tag);");*/
 
-    q.exec("CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN\
-                INSERT INTO search(rowid, tags) VALUES (new.file, new.tags);\
-                UPDATE files SET children = children + 1 WHERE file = new.parent;\
+    q.exec("CREATE TRIGGER nodes_ai AFTER INSERT ON nodes BEGIN\
+                INSERT INTO search(rowid, tags) VALUES (new.node, new.tags);\
+                UPDATE nodes SET children = children + 1 WHERE node = new.parent;\
             END;");
 
-    q.exec("CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN\
-                INSERT INTO search(search, rowid, tags) VALUES('delete', old.file, old.tags);\
-                UPDATE files SET children = children - 1 WHERE file = old.parent;\
+    q.exec("CREATE TRIGGER nodes_ad AFTER DELETE ON nodes BEGIN\
+                INSERT INTO search(search, rowid, tags) VALUES('delete', old.node, old.tags);\
+                UPDATE nodes SET children = children - 1 WHERE node = old.parent;\
             END;");
 
-    q.exec("CREATE TRIGGER files_au AFTER UPDATE ON files BEGIN\
-                INSERT INTO search(search, rowid, tags) VALUES('delete', old.file, old.tags);\
-                INSERT INTO search(rowid, tags) VALUES (new.file, new.tags);\
+    q.exec("CREATE TRIGGER nodes_au AFTER UPDATE ON nodes BEGIN\
+                INSERT INTO search(search, rowid, tags) VALUES('delete', old.node, old.tags);\
+                INSERT INTO search(rowid, tags) VALUES (new.node, new.tags);\
             END;");
 
-    q.exec("CREATE TRIGGER files_au_c AFTER UPDATE ON files WHEN old.parent <> new.parent BEGIN\
-               UPDATE files SET children = children - 1 WHERE file = old.parent;\
-               UPDATE files SET children = children + 1 WHERE file = new.parent;\
+    q.exec("CREATE TRIGGER nodes_au_children AFTER UPDATE OF parent ON nodes BEGIN\
+               UPDATE nodes SET children = children - 1 WHERE node = old.parent;\
+               UPDATE nodes SET children = children + 1 WHERE node = new.parent;\
             END;");
 
     q.exec("CREATE TRIGGER tags_ai AFTER INSERT ON tags BEGIN\
@@ -69,25 +70,28 @@ void Storage::setup() {
                 UPDATE tag_count SET cnt = cnt + 1 WHERE tag = new.tag;\
             END;");
 
-    q.exec("CREATE TRIGGER tags_ad AFTER DELETE ON files BEGIN\
+    q.exec("CREATE TRIGGER tags_ad AFTER DELETE ON tags BEGIN\
                 UPDATE tag_count SET cnt = cnt - 1 WHERE tag = old.tag;\
             END;");
 
-     db.driver()->subscribeToNotification("files");
-     db.driver()->subscribeToNotification("sources");
+     //db.driver()->subscribeToNotification("files");
+     //db.driver()->subscribeToNotification("sources");
 
      QObject::connect(db.driver(), QOverload<const QString &, QSqlDriver::NotificationSource, const QVariant &>::of(&QSqlDriver::notification), this, &Storage::notification);
 }
 
 void Storage::doWrite(QSqlQuery q) {
+    static QMutex guard;
+    guard.lock();
     while(!q.exec()) {
         if(q.lastError().nativeErrorCode() == "6") {
             QThread::msleep(10);
         } else {
-            qInfo() << q.lastQuery() << q.lastError();
+            qInfo() << q.lastQuery() << q.boundValues() << q.lastError();
             break;
         }
     }
+    guard.unlock();
 }
 
 void Storage::doWrite(QString query) {
@@ -96,83 +100,103 @@ void Storage::doWrite(QString query) {
     doWrite(q);
 }
 
-void Storage::addFile(quint64 id, quint64 parent, QString path, QString type, QString tags) {;
+void Storage::addFile(qint32 file, QString path, QString type) {
+    QSqlQuery q(db);
+    q.prepare("INSERT OR REPLACE INTO files(file, path, type) VALUES (:file, :path, :type);");
+    q.bindValue(":file", file);
+    q.bindValue(":path", path);
+    q.bindValue(":type", type);
+    doWrite(q);
+    emit refresh("files", file);
+}
+void Storage::deleteFile(qint32 file) {
+    auto query = QString("DELETE FROM files WHERE file = %1;").arg(file);
+    doWrite(query);
+    emit refresh("files", file);
+}
+void Storage::addNode(qint32 node, qint32 parent, qint32 source, qint32 file, QString tags) {
     if(tags != "") {
         tags += " any";
     }
     {
         QSqlQuery q(db);
-        q.prepare("INSERT INTO files(file, parent, children, path, type, tags) VALUES (:file, :parent, 0, :path, :type, :tags);");
-        q.bindValue(":file", id);
+        q.prepare("INSERT OR REPLACE INTO nodes(node, parent, children, source, file, tags) VALUES (:node, :parent, 0, :source, :file, :tags);");
+        q.bindValue(":node", node);
         q.bindValue(":parent", parent);
-        q.bindValue(":path", path);
-        q.bindValue(":type", type);
+        q.bindValue(":source", source);
+        q.bindValue(":file", file);
         q.bindValue(":tags", tags);
         doWrite(q);
     }
     for(QString tag : tags.split(" ")) {
         if(tag != "" && tag != "any") {
             QSqlQuery q(db);
-            q.prepare("INSERT INTO tags(tag, file) VALUES (:tag,:file);");
-            q.bindValue(":file", id);
+            q.prepare("INSERT OR IGNORE INTO tags(node, tag) VALUES (:node, :tag);");
+            q.bindValue(":node", node);
             q.bindValue(":tag", tag);
             doWrite(q);
         }
     }
-    emit refresh("files", id);
+    emit refresh("nodes", node);
 }
-void Storage::deleteFile(quint64 id) {
-    auto query = QString("DELETE FROM files WHERE file = %1 OR parent = %1;").arg(id);
+void Storage::deleteNode(qint32 node) {
+    auto query = QString("DELETE FROM nodes WHERE node = %1;").arg(node);
     doWrite(query);
-    emit refresh("files", id);
+    emit refresh("nodes", node);
 }
-
-void Storage::cloneFile(quint64 id, quint64 new_id) {
-    auto query = QString("INSERT INTO files(file, parent, path, type, tags) SELECT %1,parent,path,type,tags FROM files WHERE file = %2").arg(new_id).arg(id);
+void Storage::cloneNode(qint32 node, qint32 new_node) {
+    auto query = QString("INSERT INTO nodes(node, parent, children, source, file, tags) SELECT %1, parent, 0, source, file, tags FROM nodes WHERE node = %2;").arg(new_node).arg(node);
     doWrite(query);
-    emit refresh("files", id);
+    emit refresh("nodes", node);
 }
-
-void Storage::updateFile(quint64 id, quint64 new_parent, bool remove_tags) {
-    doWrite(QString("UPDATE files SET parent=%2 WHERE file=%1;").arg(id).arg(new_parent));
-
-    if(remove_tags) {
-        doWrite(QString("UPDATE files SET tags='' WHERE file=%1;").arg(id));
-        doWrite(QString("DELETE FROM tags WHERE file=%1;").arg(id));
-    }
-    emit refresh("files", id);
+void Storage::moveNode(qint32 node, qint32 new_parent) {
+    doWrite(QString("UPDATE nodes SET parent=%2 WHERE node=%1;").arg(node).arg(new_parent));
+    emit refresh("nodes", node);
 }
-
-void Storage::addMetadata(quint64 id, Metadata m) {
+void Storage::stripNode(qint32 node) {
+    doWrite(QString("UPDATE nodes SET tags='' WHERE node=%1;").arg(node));
+    doWrite(QString("DELETE FROM tags WHERE node=%1;").arg(node));
+    emit refresh("nodes", node);
+}
+void Storage::addMetadata(qint32 node, Metadata m) {
     QSqlQuery q(db);
-    q.prepare("INSERT INTO metadata(file, parent) VALUES (:file, :parent);");
-    q.bindValue(":file", id);
+    q.prepare("INSERT INTO metadata(node, id, parent) VALUES (:node, :id, :parent);");
+    q.bindValue(":node", node);
+    q.bindValue(":id", m.id);
     q.bindValue(":parent", m.parent);
     doWrite(q);
-    emit refresh("metadata", id);
+    emit refresh("metadata", node);
+}
+void Storage::deleteMetadata(qint32 node) {
+    doWrite(QString("DELETE FROM metadata WHERE node=%1;").arg(node));
+    emit refresh("metadata", node);
 }
 
-void Storage::deleteMetadata(quint64 id) {
-    doWrite(QString("DELETE FROM metadata WHERE file=%1;").arg(id));
-    emit refresh("metadata", id);
-}
-
-void Storage::addSource(QString path, int mode) {
+void Storage::addSource(qint32 source, QString path, int mode) {
     QSqlQuery q(db);
-    q.prepare("INSERT INTO sources(path, mode) VALUES (:path, :mode);");
+    q.prepare("INSERT INTO sources(source, path, mode, status) VALUES (:source, :path, :mode, 1);");
+    q.bindValue(":source", source);
     q.bindValue(":path", path);
     q.bindValue(":mode", mode);
     doWrite(q);
-    emit refresh("source", path);
+    emit refresh("source", source);
 }
-void Storage::deleteSource(QString path) {
-    doWrite(QString("DELETE FROM sources WHERE path='%1';").arg(path));
-    emit refresh("source", path);
+void Storage::deleteSource(qint32 source) {
+    doWrite(QString("DELETE FROM nodes WHERE source=%1;").arg(source));
+    emit refresh("nodes", source);
+    doWrite(QString("DELETE FROM sources WHERE source=%1;").arg(source));
+    emit refresh("source", source);
 }
-void Storage::updateSource(QString old_path, QString new_path, int new_mode) {
-    auto query = QString("UPDATE sources SET path='%1', mode=%2 WHERE path='%3';").arg(new_path).arg(new_mode).arg(old_path);
+void Storage::updateSource(qint32 source, QString path, int mode) {
+    doWrite(QString("DELETE FROM nodes WHERE source=%1;").arg(source));
+    auto query = QString("UPDATE sources SET path='%1', mode=%2, status=1 WHERE source=%3;").arg(path).arg(mode).arg(source);
     doWrite(query);
-    emit refresh("source", old_path);
+    emit refresh("source", source);
+}
+void Storage::statusSource(qint32 source, int status) {
+    auto query = QString("UPDATE sources SET status=%1 WHERE source=%2;").arg(status).arg(source);
+    doWrite(query);
+    emit refresh("source", source);
 }
 
 void Storage::notification(const QString& name, QSqlDriver::NotificationSource source, const QVariant& payload) {
@@ -198,6 +222,8 @@ void Reader::connect() {
 
 QSqlQuery Reader::doRead(QString query) {
     QSqlQuery q(db);
+    if(query == "")
+        return q;
     while(!q.exec(query)) {
         if(q.lastError().nativeErrorCode() == "6") {
             QThread::msleep(10);
@@ -210,60 +236,80 @@ QSqlQuery Reader::doRead(QString query) {
 }
 
 void Reader::dump() {
-    auto start = QDateTime::currentMSecsSinceEpoch();
-    auto q = doRead("SELECT * FROM (SELECT tag FROM tags WHERE file = 1000000000007) as 'tags' INNER JOIN tag_count ON tags.tag = tag_count.tag;");
-    auto end = QDateTime::currentMSecsSinceEpoch();
-    qInfo() << end - start << "SPECIAL";
-    while(q.next()) {
-        //qInfo() << q.record();
+    auto query = "SELECT * FROM nodes INNER JOIN files ON nodes.file = files.file WHERE parent = 0 ORDER BY node;";
+    auto q = doRead(query);
+    if(q.next()) {
+        qInfo() << q.record();
+    }
+    query = "SELECT nodes.*, files.* FROM (SELECT rowid FROM search WHERE tags MATCH '\"loli\" ') as 't' JOIN nodes ON t.rowid = nodes.node JOIN files ON nodes.file = files.file";
+    q = doRead(query);
+    if(q.next()) {
+        qInfo() << q.record();
     }
 }
 
 void Writer::setup() {
-    QMetaObject::invokeMethod(Storage::instance(), "setup", Qt::QueuedConnection);
+    QMetaObject::invokeMethod(Storage::instance(), "setup", Qt::BlockingQueuedConnection);
 
     while(QSqlDatabase::connectionNames().length() == 0) {
         QThread::msleep(10);
     }
 }
 
-void Writer::addFile(quint64 id, quint64 parent, QString path, QString type, QString tags) {
-    QMetaObject::invokeMethod(Storage::instance(), "addFile", Qt::QueuedConnection,
-                              Q_ARG(quint64, id), Q_ARG(quint64, parent),
-                              Q_ARG(QString, path), Q_ARG(QString, type),
+void Writer::addFile(qint32 file, QString path, QString type, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "addFile", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, file), Q_ARG(QString, path),
+                              Q_ARG(QString, type));
+}
+void Writer::deleteFile(qint32 file, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "deleteFile", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, file));
+}
+void Writer::addNode(qint32 node, qint32 parent, qint32 source, qint32 file, QString tags, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "addNode", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node), Q_ARG(qint32, parent),
+                              Q_ARG(qint32, source), Q_ARG(qint32, file),
                               Q_ARG(QString, tags));
 }
-void Writer::deleteFile(quint64 id)  {
-    QMetaObject::invokeMethod(Storage::instance(), "deleteFile", Qt::QueuedConnection,
-                              Q_ARG(quint64, id));
+void Writer::deleteNode(qint32 node, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "deleteNode", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node));
 }
-void Writer::cloneFile(quint64 id, quint64 new_id) {
-    QMetaObject::invokeMethod(Storage::instance(), "cloneFile", Qt::QueuedConnection,
-                              Q_ARG(quint64, id), Q_ARG(quint64, new_id));
+void Writer::cloneNode(qint32 node, qint32 new_node, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "cloneNode", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node), Q_ARG(qint32, new_node));
 }
-void Writer::updateFile(quint64 id, quint64 new_parent, bool remove_metadata) {
-    QMetaObject::invokeMethod(Storage::instance(), "updateFile", Qt::QueuedConnection,
-                              Q_ARG(quint64, id), Q_ARG(quint64, new_parent),
-                              Q_ARG(bool, remove_metadata));
+void Writer::moveNode(qint32 node, qint32 new_parent, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "moveNode", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node), Q_ARG(qint32, new_parent));
 }
-void Writer::addMetadata(quint64 id, Metadata m) {
-    QMetaObject::invokeMethod(Storage::instance(), "addMetadata", Qt::QueuedConnection,
-                              Q_ARG(quint64, id), Q_ARG(Metadata, m));
+void Writer::stripNode(qint32 node, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "stripNode", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node));
 }
-void Writer::deleteMetadata(quint64 id) {
-    QMetaObject::invokeMethod(Storage::instance(), "deleteMetadata", Qt::QueuedConnection,
-                              Q_ARG(quint64, id));
+void Writer::addMetadata(qint32 node, Metadata m, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "addMetadata", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node), Q_ARG(Metadata, m));
 }
-void Writer::addSource(QString path, int mode) {
-    QMetaObject::invokeMethod(Storage::instance(), "addSource", Qt::QueuedConnection,
-                              Q_ARG(QString, path), Q_ARG(int, mode));
+void Writer::deleteMetadata(qint32 node, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "deleteMetadata", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, node));
 }
-void Writer::deleteSource(QString path) {
-    QMetaObject::invokeMethod(Storage::instance(), "deleteSource", Qt::QueuedConnection,
-                              Q_ARG(QString, path));
+void Writer::addSource(qint32 source, QString path, int mode, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "addSource", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, source), Q_ARG(QString, path),
+                              Q_ARG(int, mode));
 }
-void Writer::updateSource(QString old_path, QString new_path, int new_mode) {
-    QMetaObject::invokeMethod(Storage::instance(), "updateSource", Qt::QueuedConnection,
-                              Q_ARG(QString, old_path), Q_ARG(QString, new_path),
-                              Q_ARG(int, new_mode));
+void Writer::deleteSource(qint32 source, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "deleteSource", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, source));
+}
+void Writer::updateSource(qint32 source, QString path, int mode, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "updateSource", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, source), Q_ARG(QString, path),
+                              Q_ARG(int, mode));
+}
+void Writer::statusSource(qint32 source, int status, bool blocking) {
+    QMetaObject::invokeMethod(Storage::instance(), "statusSource", blocking ? Qt::BlockingQueuedConnection : Qt::QueuedConnection,
+                              Q_ARG(qint32, source), Q_ARG(int, status));
 }

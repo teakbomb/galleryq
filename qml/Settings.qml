@@ -87,8 +87,8 @@ PopupWindow {
         StackLayout {
             anchors.fill: parent
             currentIndex: tabList.currentIndex
-            Rectangle {
-                color: Constants.green
+            SettingsGui {
+
             }
             SettingsSources {
 

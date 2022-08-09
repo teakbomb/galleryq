@@ -9,7 +9,7 @@ import "components"
 Item {
 
     Item {
-        id: uh
+        id: container
         x: 20
         y: 20
         width: parent.width - 40
@@ -24,7 +24,7 @@ Item {
             boundsBehavior: Flickable.StopAtBounds
             model: Sql {
                 id: sql
-                query: "SELECT path, mode FROM sources;"
+                query: "SELECT * FROM sources;"
             }
 
             orientation: Qt.Vertical
@@ -65,7 +65,18 @@ Item {
                 }
 
                 property bool modified: sql_mode !== mode.currentIndex + 1 || sql_path !== path.text
+                required property int sql_status
+                required property int sql_mode
+                required property var sql_path
+                required property int sql_source
 
+                onSql_sourceChanged: {
+                    star.saved = util.isSourceSaved(sql_path)
+                }
+
+                onSql_pathChanged: {
+                    star.saved = util.isSourceSaved(sql_path)
+                }
 
                 IconButton {
                     id: reload
@@ -74,12 +85,40 @@ Item {
                     anchors.bottom: parent.bottom
                     anchors.left: parent.left
                     icon: "qrc:/icons/refresh.svg"
-                    color: Constants.bg1
+                    color: "transparent"
                     disabled: modified
+                    working: sql_status === 2
 
                     onPressed: {
-                        util.startLoad(sql_path)
+                        util.startLoad(sql_source)
                     }
+
+                    tooltip: "Load source"
+                }
+
+                IconButton {
+                    id: star
+                    width: height
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.left: reload.right
+                    property var saved: util.isSourceSaved(sql_path)
+                    icon: saved && !modified ? "qrc:/icons/star.svg": "qrc:/icons/star-outline.svg"
+                    color: "transparent"
+                    disabled: reload.working || modified
+
+                    onPressed: {
+                        util.toggleSourceSaved(sql_path)
+                    }
+
+                    Connections {
+                        target: util
+                        function onConfigChanged() {
+                            star.saved = util.isSourceSaved(sql_path)
+                        }
+                    }
+
+                    tooltip: saved ? "Unfavourite source" : "Favourite source"
                 }
 
                 TextInput {
@@ -90,7 +129,7 @@ Item {
                     leftPadding: 4
                     color: "white"
                     selectByMouse: true
-                    anchors.left: reload.right
+                    anchors.left: star.right
                     anchors.right: mode.left
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
@@ -102,6 +141,7 @@ Item {
                     anchors.right: save.left
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
+                    currentIndex: sql_mode - 1
                     width: 200
                     model: ["Collection", "Flat"]
                 }
@@ -111,13 +151,13 @@ Item {
                     width: height
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
-                    anchors.right: parent.right
+                    anchors.right: trash.left
                     icon: "qrc:/icons/save.svg"
-                    disabled: !modified
+                    disabled: reload.working || !modified
                     color: Constants.bg1
 
                     onPressed: {
-                        var status = util.updateSource(sql_path, path.text, mode.currentIndex + 1);
+                        var status = util.updateSource(sql_source, path.text, mode.currentIndex + 1);
                         if(!status) {
                             error.start()
                         } else {
@@ -126,7 +166,34 @@ Item {
                     }
                 }
 
-                width: uh.width
+                IconButton {
+                    id: trash
+                    width: height
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.right: parent.right
+                    icon: check ? "qrc:/icons/tick.svg" : "qrc:/icons/trash.svg"
+                    iconHoverColor: check ? "#4f0000" : "white"
+                    color: "transparent"
+                    disabled: reload.working
+                    property bool check: false
+
+                    onPressed: {
+                        if(!check) {
+                            check = true
+                            return
+                        }
+                        util.deleteSource(sql_source);
+                    }
+
+                    onLeave: {
+                        check = false
+                    }
+
+                    tooltip: check ? "Really delete source?" : "Delete source"
+                }
+
+                width: container.width
                 height: 30
             }
         }
@@ -143,6 +210,8 @@ Item {
                 util.newSource()
                 sql.reload()
             }
+
+            tooltip: "New source"
         }
 
     }

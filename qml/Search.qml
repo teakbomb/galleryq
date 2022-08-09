@@ -12,7 +12,9 @@ Item {
     signal searchEmpty()
     signal searchSuccess()
 
-    signal focusSuggestions()
+    signal up()
+    signal down()
+    signal add()
 
     function gainFocus() {
         search.forceActiveFocus()
@@ -29,6 +31,8 @@ Item {
     }
 
     function tagStatus(tag) {
+        if(tag == undefined)
+            return 0
         var escaped = tag.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
 
         var pos = search.text.search(new RegExp("(^|[\\[\\s])" + escaped + "($|[\\]\\s])"));
@@ -185,8 +189,18 @@ Item {
         }
 
         Keys.onPressed: {
+            if(event.key === Qt.Key_Tab) {
+                event.accepted = true
+                add()
+                return
+            }
             if(event.key === Qt.Key_Down && activeFocus) {
-                focusSuggestions()
+                event.accepted = true
+                down()
+            }
+            if(event.key === Qt.Key_Up && activeFocus) {
+                event.accepted = true
+                up()
             }
             if(event.key === Qt.Key_Escape) {
                 event.accepted = true

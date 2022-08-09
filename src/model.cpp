@@ -20,17 +20,6 @@
 #include "sql.h"
 #include "storage.h"
 
-quint64 get_id() {
-    static QMutex guard;
-    static quint64 static_id = 1000000000000ULL;
-
-    guard.lock();
-    auto id = static_id++;
-    guard.unlock();
-
-    return id;
-}
-
 Model::Model()
 {
     reader = Reader{};
@@ -61,6 +50,7 @@ Metadata Model::parseMetadata(QString path) {
 
     Metadata m{.id = 0, .parent=0, .tags=""};
 
+
     QFile in(path);
 
     if(!in.exists())
@@ -77,9 +67,6 @@ Metadata Model::parseMetadata(QString path) {
     auto o = doc.object();
 
     QStringList tags;
-
-
-
     for(QString alias : tagsAlias) {
         if(o.contains(alias)) {
             auto v = o.value(alias);
@@ -119,7 +106,7 @@ Metadata Model::parseMetadata(QString path) {
     return m;
 }
 
-void Model::traverseFlat(QString path, quint64 parent = 0) {
+void Model::traverseFlat(qint32 sourceID, QString path, qint32 parent = 0) {
     QDir dir(path);
     dir.setFilter(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot);
     dir.setSorting(QDir::Time);
@@ -158,22 +145,27 @@ void Model::traverseFlat(QString path, quint64 parent = 0) {
             jsonFiles.removeAll(jsonItem);
             namesMap.remove(json);
 
-            auto id = get_id();
+            auto file = Storage::ID(path);
+            auto node = Storage::UUID();
 
-            Writer::addFile(id, parent, path, getType(path), m.tags);
-            Writer::addMetadata(id, m);
+            Writer::addFile(file, path, getType(path));
+            Writer::addNode(node, parent, sourceID, file, m.tags);
+            Writer::addMetadata(node, m);
         }
     }
 
     for(QFileInfo item : looseMediaFiles) {
         Metadata m = parseMetadata("");
-        auto f = item.absoluteFilePath();
-        auto id = get_id();
-        Writer::addFile(id, parent, f, getType(f), m.tags);
+        auto path = item.absoluteFilePath();
+        auto file = Storage::ID(path);
+        auto node = Storage::UUID();
+
+        Writer::addFile(file, path, getType(path));
+        Writer::addNode(node, parent, sourceID, file, "");
     }
 }
 
-void Model::traverseCollection(QString path, quint64 parent = 0) {
+void Model::traverseCollection(qint32 sourceID, QString source, qint32 parent = 0) {
     //any media file named like a sub-directory will become the parent of that sub-directory
     //  ex: /site1.png, /site1/
     //      becomes a file with site1.png as cover, and all files found in /site1/ as children
@@ -187,8 +179,7 @@ void Model::traverseCollection(QString path, quint64 parent = 0) {
     //      becomes a file with 0.png as cover, metadata.json as metadata, and 0.png, 1.png, 2.png as children
     //  ex: /0.png, /tags.json
     //      becomes a file with 0.png as cover, tags.json as metadata
-
-    QDir dir(path);
+    QDir dir(source);
     dir.setFilter(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot);
     dir.setSorting(QDir::Time);
     auto list = dir.entryInfoList();
@@ -236,7 +227,7 @@ void Model::traverseCollection(QString path, quint64 parent = 0) {
         }
 
         Metadata m = parseMetadata("");
-        auto id = get_id();
+        auto file = Storage::ID(path);
 
         if(namesMap.contains(json)) {
             auto jsonItem = namesMap[json];
@@ -247,12 +238,16 @@ void Model::traverseCollection(QString path, quint64 parent = 0) {
             namesMap.remove(json);
         }
 
-        Writer::addFile(id, parent, path, getType(path), m.tags);
-        Writer::addMetadata(id, m);
+
+        auto node = Storage::UUID();
+
+        Writer::addFile(file, path, getType(path));
+        Writer::addNode(node, parent, sourceID, file, m.tags, true);
+        Writer::addMetadata(node, m);
 
         if(namesMap.contains(dir)) {
             auto dirItem = namesMap[dir];
-            traverseCollection(dirItem.absoluteFilePath(), id);
+            traverseCollection(sourceID, dirItem.absoluteFilePath(), node);
             subDirectories.removeAll(dirItem);
             namesMap.remove(dir);
         }
@@ -260,72 +255,84 @@ void Model::traverseCollection(QString path, quint64 parent = 0) {
 
     if(looseMediaFiles.length() > 0) {
         Metadata m = parseMetadata(jsonFiles.length() ? jsonFiles[0].absoluteFilePath() : "");
-        auto id = get_id();
 
-        auto f = looseMediaFiles[0].absoluteFilePath();
-        Writer::addFile(id, parent, f, getType(f), m.tags);
-        Writer::addMetadata(id, m);
+        auto path = looseMediaFiles[0].absoluteFilePath();
+        auto file = Storage::ID(path);
+        auto node = Storage::UUID();
+
+        Writer::addFile(file, path, getType(path));
+        Writer::addNode(node, parent, sourceID, file, m.tags, true);
+        Writer::addMetadata(node, m);
 
         if(looseMediaFiles.length() > 1) {
             for(QFileInfo item : looseMediaFiles) {
-                auto f = item.absoluteFilePath();
-                auto child = get_id();
-                Writer::addFile(child, id, f, getType(f), "");
+                auto path = item.absoluteFilePath();
+                auto file = Storage::ID(path);
+                auto child = Storage::UUID();
+
+                Writer::addFile(file, path, getType(path));
+                Writer::addNode(child, node, sourceID, file, "", true);
             }
         }
     }
 
     for(QFileInfo item : subDirectories) {
-        traverseCollection(item.absoluteFilePath(), parent);
+        traverseCollection(sourceID, item.absoluteFilePath(), parent);
     }
 }
 
-bool Model::loadSingle(QString path) {
-    QSqlQuery q(QString("SELECT mode FROM sources WHERE path = '%1';").arg(path), reader.db);
+bool Model::load(qint32 source) {
+    auto q = reader.doRead(QString("SELECT path, mode FROM sources WHERE source = %1;").arg(source));
     if(!q.next()) {
         return false;
     }
-    auto mode = (MODE)q.value(0).toInt();
+    auto path = q.value(0).toString();
+    auto mode = (MODE)q.value(1).toInt();
+    q.finish();
 
     switch(mode) {
     case FLAT:
-        traverseFlat(path, 0);
+        traverseFlat(source, path, 0);
         break;
     case COLLECTION:
-        traverseCollection(path, 0);
+        traverseCollection(source, path, 0);
         break;
     default:
         break;
     }
 
-    mergeSiblings();
+    mergeSiblings(source);
 
     return true;
 }
 
-void Model::mergeSiblings() {
-    auto q = reader.doRead("SELECT parent, COUNT(*) as 'occurances' FROM metadata WHERE parent != 0 GROUP BY parent ORDER BY occurances;");
+void Model::mergeSiblings(qint32 source) {
+    auto sub = QString("SELECT nodes.node as 'node', id, metadata.parent AS 'parent' FROM metadata INNER JOIN nodes ON metadata.node = nodes.node WHERE source = %1").arg(source);
+    auto occ = QString("SELECT parent, COUNT(*) as 'occurances' FROM (%1) WHERE parent != 0 GROUP BY parent ORDER BY occurances;").arg(sub);
+    auto q = reader.doRead(occ);
     while (q.next()) {
-        auto parent = q.value(0).toULongLong();
-        auto count = q.value(1).toUInt();
+
+        auto parent = q.value(0).toInt();
+        auto count = q.value(1).toInt();
         if(count == 1)
             continue;
-        quint64 new_root = 0;
 
-        auto p = reader.doRead(QString("SELECT * FROM files WHERE file = %1;").arg(parent));
+        quint64 parent_node = 0;
+
+        auto p = reader.doRead(QString("SELECT node FROM (%2) WHERE id = %1;").arg(parent).arg(sub));
         if(p.next()) { //parent already exists
-            new_root = parent;
+            parent_node = p.value(0).toInt();
         }
 
-        auto s = reader.doRead(QString("SELECT * FROM metadata WHERE parent = %1 ORDER BY file;").arg(parent));
-
+        auto s = reader.doRead(QString("SELECT node FROM (%2) WHERE parent = %1;").arg(parent).arg(sub));
         while (s.next()) {
-            auto f = s.value(0).toULongLong();
-            if(!new_root) {
-                new_root = get_id();
-                Writer::cloneFile(f, new_root);
+            auto node = s.value(0).toInt();
+            if(!parent_node) {
+                parent_node = Storage::UUID();
+                Writer::cloneNode(node, parent_node);
             }
-            Writer::updateFile(f, new_root, true);
+            Writer::moveNode(node, parent_node);
+            Writer::stripNode(node);
         }
     }
 }

@@ -7,7 +7,7 @@ Item {
 
     property string source
     property string type
-    property var file
+    property int node
     property int count
     property bool selected
 

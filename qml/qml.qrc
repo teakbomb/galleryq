@@ -39,5 +39,10 @@
         <file>components/Combo.qml</file>
         <file>icons/save.svg</file>
         <file>icons/refresh.svg</file>
+        <file>SettingsGui.qml</file>
+        <file>components/InfoToolTip.qml</file>
+        <file>icons/star-outline.svg</file>
+        <file>icons/star.svg</file>
+        <file>components/CheckBox.qml</file>
     </qresource>
 </RCC>

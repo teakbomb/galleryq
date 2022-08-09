@@ -5,6 +5,7 @@
 #include <QVariant>
 #include <QSqlDatabase>
 #include <QSqlDriver>
+#include <QMutex>
 
 struct Metadata {
     quint64 id;
@@ -24,7 +25,25 @@ public:
         static Storage i;
         return &i;
     }
+    enum STATUS {
+        UNKNOWN,
+        UNLOADED,
+        LOADING,
+        LOADED,
+    };
+    static qint32 ID(QString data) {
+        return (qint32)(qHash(data) >> 1);
+    }
+    static qint32 UUID() {
+        static qint32 static_id = 1000000000;
+        static QMutex guard;
 
+        guard.lock();
+        auto id = static_id++;
+        guard.unlock();
+
+        return id;
+    }
 private:
     QSqlDatabase db;
     void doWrite(QSqlQuery q);
@@ -34,17 +53,22 @@ signals:
 public slots:
     void setup();
 
-    void addFile(quint64 id, quint64 parent, QString path, QString type, QString tags);
-    void deleteFile(quint64 id);
-    void cloneFile(quint64 id, quint64 new_id);
-    void updateFile(quint64 id, quint64 new_parent, bool remove_metadata);
+    void addFile(qint32 file, QString path, QString type);
+    void deleteFile(qint32 file);
 
-    void addMetadata(quint64 id, Metadata m);
-    void deleteMetadata(quint64 id);
+    void addNode(qint32 node, qint32 parent, qint32 source, qint32 file, QString tags);
+    void deleteNode(qint32 node);
+    void cloneNode(qint32 node, qint32 new_node);
+    void moveNode(qint32 node, qint32 new_parent);
+    void stripNode(qint32 node);
 
-    void addSource(QString path, int mode);
-    void deleteSource(QString path);
-    void updateSource(QString old_path, QString new_path, int new_mode);
+    void addMetadata(qint32 node, Metadata m);
+    void deleteMetadata(qint32 node);
+
+    void addSource(qint32 source, QString path, int mode);
+    void deleteSource(qint32 source);
+    void updateSource(qint32 source, QString path, int mode);
+    void statusSource(qint32 source, int status);
 private slots:
     void notification(const QString& name, QSqlDriver::NotificationSource source, const QVariant& payload);
 };
@@ -65,17 +89,22 @@ class Writer
 public:
     static void setup();
 
-    static void addFile(quint64 id, quint64 parent, QString path, QString type, QString tags);
-    static void deleteFile(quint64 id);
-    static void cloneFile(quint64 id, quint64 new_id);
-    static void updateFile(quint64 id, quint64 new_parent, bool remove_metadata);
+    static void addFile(qint32 file, QString path, QString type, bool blocking = false);
+    static void deleteFile(qint32 file, bool blocking = false);
 
-    static void addMetadata(quint64 id, Metadata m);
-    static void deleteMetadata(quint64 id);
+    static void addNode(qint32 node, qint32 parent, qint32 source, qint32 file, QString tags, bool blocking = false);
+    static void deleteNode(qint32 node, bool blocking = false);
+    static void cloneNode(qint32 node, qint32 new_node, bool blocking = false);
+    static void moveNode(qint32 node, qint32 new_parent, bool blocking = false);
+    static void stripNode(qint32 node, bool blocking = false);
 
-    static void addSource(QString path, int mode);
-    static void deleteSource(QString path);
-    static void updateSource(QString old_path, QString new_path, int new_mode);
+    static void addMetadata(qint32 node, Metadata m, bool blocking = false);
+    static void deleteMetadata(qint32 node, bool blocking = false);
+
+    static void addSource(qint32 source, QString path, int mode, bool blocking = false);
+    static void deleteSource(qint32 source, bool blocking = false);
+    static void updateSource(qint32 source, QString path, int mode, bool blocking = false);
+    static void statusSource(qint32 source, int status, bool blocking = false);
 };
 
 

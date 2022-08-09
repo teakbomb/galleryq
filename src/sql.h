@@ -2,15 +2,15 @@
 #define SQL_H
 
 #include <QObject>
-#include <QSqlQueryModel>
-#include <QSqlQuery>
-#include <qqml.h>
-#include <QSqlDriver>
-#include <QDateTime>
+#include <QAbstractTableModel>
+#include <QList>
+#include <QSqlRecord>
 #include <QTimer>
-#include <QRandomGenerator>
+#include <qqml.h>
 
-class Sql : public QSqlQueryModel
+#include "storage.h"
+
+class Sql : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(QString query READ getQuery WRITE setQuery NOTIFY queryChanged)
@@ -18,25 +18,30 @@ class Sql : public QSqlQueryModel
     Q_PROPERTY(bool errored READ hasErrored NOTIFY queryChanged)
     QML_ELEMENT
 public:
-    explicit Sql(QObject *parent = 0);
-    ~Sql();
-    void setQuery(const QString &query, const QSqlDatabase &db = QSqlDatabase());
-    void setQuery(const QSqlQuery &query);
+    Sql(QObject *parent=nullptr);
+    void setQuery(const QString& query);
     QString getQuery();
     bool hasErrored();
-    QVariant data(const QModelIndex &index, int role) const;
-    QHash<int, QByteArray> roleNames() const {	return m_roleNames;	}
+    int rowCount(const QModelIndex &parent = QModelIndex()) const Q_DECL_OVERRIDE;
+    //int columnCount(const QModelIndex &parent = QModelIndex()) const Q_DECL_OVERRIDE;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const Q_DECL_OVERRIDE;
+    QHash<int, QByteArray> roleNames() const;
 private:
-    void generateRoleNames();
-    QHash<int, QByteArray> m_roleNames;
+    Reader* reader;
     QString query;
-    QTimer *reload_timer;
-    QSqlDatabase db;
+    QList<QSqlRecord> results;
+    bool errored = false;
+    QHash<int, QByteArray> fieldNames;
+    QTimer *reloadTimer;
+    void updateFieldNames(QSqlRecord record);
+    void reset();
+    void updateResults(QList<QSqlRecord> newResults);
 signals:
     void queryChanged();
 public slots:
     void reload();
-    void refresh(const QString& name, const QVariant& payload);
+private slots:
+    void dbChanged(const QString& name, const QVariant& payload);
 };
 
 #endif // SQL_H

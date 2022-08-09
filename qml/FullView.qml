@@ -15,6 +15,9 @@ GridView {
     interactive: false
     clip: true
     property bool paused: false
+    property bool zoom: false
+
+    cacheBuffer: 1.5*height
 
     signal contextMenu()
 
@@ -114,6 +117,10 @@ GridView {
         }
 
         onWheel: {
+            if(zoom) {
+                wheel.accepted = false
+                return
+            }
             if(wheel.angleDelta.y < 0) {
                 hView.down(false)
             } else {
@@ -128,7 +135,7 @@ GridView {
         height: hView.height
 
         model: Sql {
-            query: Constants.file_children_query(sql_file, sql_children)
+            query: Constants.children_query(sql_node, sql_children)
         }
 
         cellWidth: width
@@ -160,13 +167,15 @@ GridView {
         property int hIndex: index
 
         delegate: Rectangle {
+            id: item
             width: vView.width
             height: vView.height
 
             property int vIndex: index
-            property var file: sql_file
+            property var node: sql_node
             property var source: sql_path
             property var count: sql_children
+            property bool selected: hView.currentIndex === hIndex && vView.currentIndex === vIndex
 
             color: Constants.bg0
 
@@ -177,19 +186,41 @@ GridView {
                 type: sql_type
                 thumbnail: hView.width < 100
                 fast: hView.fast || scroll.pressed || autoclick.running
-                active: hView.currentIndex === hIndex && vView.currentIndex === vIndex
+                active: selected
                 paused: hView.paused
 
-                Drag.active: mouse.drag.active
-                MouseArea {
-                    id: mouse
-                    propagateComposedEvents: true
-                    anchors.fill: media.bounds
-                    drag.target: media
-                }
+                //Drag.active: mouse.drag.active
+                //MouseArea {
+                //    id: mouse
+                //    propagateComposedEvents: true
+                //    anchors.fill: media.bounds
+                //    drag.target: media
+                //}
 
                 onContextMenu: {
                     hView.contextMenu()
+                }
+
+            }
+
+            onNodeChanged: {
+                if(selected && hIndex !== -1 && vIndex !== -1) {
+                    activeChanged(item.node)
+                }
+            }
+
+            onSelectedChanged: {
+                if(selected && hIndex !== -1 && vIndex !== -1) {
+                    activeChanged(item.node)
+                }
+            }
+
+            Component.onCompleted: {
+                var a = hView.currentIndex === hIndex && vView.currentIndex === vIndex;
+                var b = hIndex === 0 && vIndex === 0 && hView.currentIndex === -1 && vView.currentIndex === -1;
+
+                if(a || b) {
+                    activeChanged(item.node)
                 }
             }
         }

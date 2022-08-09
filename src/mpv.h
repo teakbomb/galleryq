@@ -11,9 +11,6 @@
 #include <mpv/render_gl.h>
 #include "mpv_qthelper.h"
 
-static void on_mpv_redraw(void *);
-static void *get_proc_address_mpv(void *ctx, const char *name);
-
 class MpvSingleton;
 
 class MpvObject : public QQuickFramebufferObject

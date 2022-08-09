@@ -8,14 +8,26 @@ import gallery.constants 1.0
 ListView {
     id: suggestions
 
-    signal focusText();
-
     property int mice: 0
 
     function reset() {
         mice = 0
+        //currentIndex = 0
+    }
+
+    function up() {
+        decrementCurrentIndex()
+    }
+
+    function down() {
+        incrementCurrentIndex()
+    }
+
+    function add() {
+        tagSelected(currentItem.tag)
         currentIndex = 0
     }
+
 
     clip:false
     snapMode: ListView.SnapToItem
@@ -91,30 +103,15 @@ ListView {
                 }
             }
         }
+
+        Component.onCompleted: {
+            if(suggestions.currentIndex == -1 && index == 0)
+                suggestions.currentIndex = 0;
+        }
+
         height: 20
         width: suggestions.width
     }
     orientation: Qt.Vertical
     height: Math.min(99, contentHeight)
-
-    Keys.onPressed: {
-        switch(event.key) {
-        case Qt.Key_Up:
-            event.accepted = true
-            if(currentIndex == 0)
-                focusText()
-            else
-                decrementCurrentIndex()
-            break;
-        case Qt.Key_Down:
-            event.accepted = true
-            incrementCurrentIndex()
-            break;
-        case Qt.Key_Return:
-            event.accepted = true
-            tagSelected(currentItem.tag)
-            break;
-
-        }
-    }
 }

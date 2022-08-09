@@ -14,9 +14,24 @@ Window {
     visible: true
     color: Constants.bg1
 
-    property var file: 0
+    DropArea {
+        id: dropArea;
+        anchors.fill: parent
+        onDropped: {
+            for(var i = 0; i < drop.urls.length; i++) {
+                util.onDrop(drop.urls[i])
+            }
+        }
+    }
+
+
+    property var node: 0
     property var stack: []
     property int stackLength: 0
+
+    property var activeThumbNode: -1
+    property var activeThumbTags: -1
+    property var activeFullNode: -1
 
     function close() {
         if(search.text != "") {
@@ -27,35 +42,34 @@ Window {
         if(stack.length > 0) {
             var last = stack.pop()
             stackLength--;
-            file = last['file']
+            root.node = last['node']
             thumbView.currentIndex = last['index']
             thumbView.contentY = last['position']
             return
         }
     }
 
-    function open(file) {
-        stack.push({'file': root.file, 'index':thumbView.currentIndex, 'position': thumbView.contentY, 'search': search.text})
+    function open(node) {
+        stack.push({'node': root.node, 'index':thumbView.currentIndex, 'position': thumbView.contentY, 'search': search.text})
         stackLength++;
-        root.file = file
-        thumbView.currentIndex = 0
-    }
-
-    function search(query) {
-        root.file = file
+        root.node = node
         thumbView.currentIndex = 0
     }
 
     Sql {
         id: model
-        query: Constants.file_query(root.file)
+        property string search: ""
+        query: model.search == "" ? Constants.parent_query(root.node) : Constants.search_query(root.node, model.search)
+
+
+        onCountChanged: {
+            if(count > 0 && thumbView.currentIndex == -1) {
+                thumbView.currentIndex = 0
+            }
+        }
     }
 
-    Sql {
-        id: search_model
-    }
-
-    property var active: search_model.count > 0 ? search_model : model
+    property var active: model
 
     Item {
         id: thumbArea
@@ -74,7 +88,7 @@ Window {
             model: active
 
             onOpen: {
-                root.open(thumbView.currentItem.file)
+                root.open(thumbView.currentItem.node)
             }
 
             onCurrentIndexChanged: {
@@ -82,12 +96,16 @@ Window {
             }
 
             onContextMenu: {
-                console.log(thumbView.currentItem.file)
                 var f = thumbView.currentItem
-                contextMenu.file = f.file
+                contextMenu.node = f.node
                 contextMenu.children = f.count
                 contextMenu.source = f.source
                 contextMenu.popup()
+            }
+
+            function activeChanged(node, tags) {
+                activeThumbNode = node
+                activeThumbTags = tags
             }
         }
 
@@ -95,7 +113,7 @@ Window {
             id: back
             anchors.left: parent.left
             anchors.top: parent.top
-            height: stackLength > 0 || search_model.count > 0 ? 30 : 0
+            height: stackLength > 0 || model.search != "" ? 30 : 0
             width: height
             icon:  "qrc:/icons/back.svg"
             iconColor: Constants.grey4
@@ -114,15 +132,15 @@ Window {
             height: 30
 
             function doSearch(query) {
-                search_model.query = Constants.file_search_query(root.file, query)
+                model.search = query
 
                 if(search.text == "") {
                     return;
                 }
 
-                if(search_model.errored) {
+                if(model.errored) {
                     search.searchInvalid()
-                } else if (search_model.count == 0) {
+                } else if (model.count == 0) {
                     search.searchEmpty()
                 } else {
                     search.searchSuccess()
@@ -134,9 +152,16 @@ Window {
                 keyboardFocus.forceActiveFocus()
             }
 
-            onFocusSuggestions: {
-                suggestions.currentIndex = 0
-                suggestions.forceActiveFocus()
+            onUp: {
+                suggestions.up()
+            }
+
+            onDown: {
+                suggestions.down()
+            }
+
+            onAdd: {
+                suggestions.add()
             }
         }
 
@@ -170,16 +195,13 @@ Window {
                 query: Constants.tags_query(search.current, 20)
                 onQueryChanged: {
                     suggestions.reset()
+                    if(suggestions.currentIndex == -1)
+                        suggestions.currentIndex = 0
                 }
             }
 
             function tagSelected(tag) {
                 search.tagComplete(tag)
-                search.gainFocus()
-            }
-
-            onFocusText: {
-                search.gainFocus()
             }
 
             Keys.forwardTo: [search]
@@ -201,7 +223,7 @@ Window {
             }
 
             onOpenTrash: {
-               util.dump()
+               util.startFullLoad();
             }
         }
     }
@@ -252,10 +274,14 @@ Window {
 
         onContextMenu: {
             var f = getCurrent()
-            contextMenu.file = f.file
+            contextMenu.node = f.node
             contextMenu.children = f.count
             contextMenu.source = f.source
             contextMenu.popup()
+        }
+
+        function activeChanged(node) {
+            activeFullNode = node
         }
     }
 
@@ -281,7 +307,8 @@ Window {
         }
 
         onMaxXChanged: {
-            metadataDivider.offset = Math.min(metadataDivider.maxX, Math.max(metadataDivider.minX, metadataDivider.offset))
+            if(parent.width > 0 && thumbDivider.x > 0) //wait for the GUI to actually be constructed...
+                metadataDivider.offset = Math.min(metadataDivider.maxX, Math.max(metadataDivider.minX, metadataDivider.offset))
         }
 
         Component.onCompleted: {
@@ -291,7 +318,8 @@ Window {
 
     MetadataView {
         id: metadataView
-        file: thumbView.currentItem != null ? thumbView.currentItem.file : "0"
+        node: activeThumbTags == "" && activeFullNode != -1 ? activeFullNode : activeThumbNode
+
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.left: metadataDivider.right
@@ -315,16 +343,16 @@ Window {
         }
     }
 
-    function deleteFile(id) {
+    function deleteFile(node) {
         var y = thumbView.contentY
-        util.deleteFile(id)
-        root.file = root.file
+        util.deleteFile(node)
+        root.node = root.node
         thumbView.contentY = y
     }
 
     ContextMenu {
         id: contextMenu
-        property var file
+        property var node
         property var source
         property var children: 0
 
@@ -347,7 +375,7 @@ Window {
             id: del
             text: "Delete"
             onTriggered: {
-                deleteFile(contextMenu.file)
+                deleteFile(contextMenu.node)
             }
         }
 
@@ -381,8 +409,6 @@ Window {
         id: keyboardFocus
         focus: true
         anchors.fill: parent
-
-
 
         Keys.onPressed: {
 
@@ -428,19 +454,28 @@ Window {
                 } else {
                     root.visibility = Window.FullScreen
                 }
+                break;
             case Qt.Key_Return:
                 if(thumbView.currentItem.count > 0)
-                    open(thumbView.currentItem.file)
+                    open(thumbView.currentItem.node)
                 break;
             case Qt.Key_Space:
                 fullView.paused = !fullView.paused
                 break;
-
+            case Qt.Key_Control:
+                fullView.zoom = true;
+                break;
             default:
 
             }
         }
         Keys.onReleased: {
+            switch(event.key) {
+            case Qt.Key_Control:
+                fullView.zoom = false;
+                break;
+            }
+
             if(!fullView.fast)
                return;
             switch(event.key) {
@@ -455,6 +490,9 @@ Window {
                 break;
             case Qt.Key_Down:
                 fullView.fast = event.isAutoRepeat
+                break;
+            case Qt.Key_Control:
+                fullView.zoom = false;
                 break;
             }
         }

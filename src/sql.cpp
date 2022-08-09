@@ -1,82 +1,134 @@
 #include "sql.h"
-#include <QSqlRecord>
-#include <QSqlField>
+
+#include <QSqlQuery>
 #include <QSqlError>
-#include <QSqlDatabase>
+#include <QSqlRecord>
 #include <QRandomGenerator>
 
-#include "storage.h"
-
-Sql::Sql(QObject *parent) : QSqlQueryModel(parent) {
-    static Reader r{}; //default db is on the writer thread, we need our own
-    db = r.db;
-    reload_timer = new QTimer(this);
-    reload_timer->setSingleShot(true);
-    connect(reload_timer, &QTimer::timeout, this, &Sql::reload);
-    connect(Storage::instance(), &Storage::refresh, this, &Sql::refresh);
+Sql::Sql(QObject *parent) {
+    static Reader r{};
+    reader = &r;
+    reloadTimer = new QTimer(this);
+    reloadTimer->setSingleShot(true);
+    connect(reloadTimer, &QTimer::timeout, this, &Sql::reload);
+    connect(Storage::instance(), &Storage::refresh, this, &Sql::dbChanged);
 }
-
-Sql::~Sql() {
-    disconnect(Storage::instance(), &Storage::refresh, this, &Sql::refresh);
-}
-
-void Sql::setQuery(const QString &query, const QSqlDatabase &db) {
-    auto start = QDateTime::currentMSecsSinceEpoch();
-    QSqlQueryModel::setQuery(query, this->db);
-    auto end = QDateTime::currentMSecsSinceEpoch();
-    //qInfo() << end - start << query;
-
-    if(lastError().isValid())
-        qInfo() << query << lastError();
-
-    while(canFetchMore())
-        fetchMore();
-
+void Sql::setQuery(const QString& query) {
     this->query = query;
+    auto q = reader->doRead(query);
+    if(q.lastError().isValid()) {
+        errored = true;
+        reset();
+        emit queryChanged();
+        return;
+    }
+    errored = false;
 
-    generateRoleNames();
+    QList<QSqlRecord> newResults;
+    while(q.next()) {
+        newResults.append(q.record());
+    }
+    q.finish();
+
+    updateResults(newResults);
 
     emit queryChanged();
 }
 
-void Sql::setQuery(const QSqlQuery & query) {
-    qInfo() << "not safe";
+void Sql::updateResults(QList<QSqlRecord> newResults) {
+    if(!newResults.isEmpty()) {
+        updateFieldNames(newResults.first());
+    } else {
+        fieldNames.clear();
+    }
+
+    if(results.length() == 0 || newResults.length() == 0) {
+        beginResetModel();
+
+        results.clear();
+        results.append(newResults);
+
+        endResetModel();
+        return;
+    }
+
+    auto shared = qMin(newResults.length(), results.length());
+
+    for(int i = 0; i < shared; i++) {
+        if(newResults[i] != results[i]) {
+            results[i] = newResults[i];
+            emit dataChanged(index(i), index(i));
+        }
+    }
+
+    if(results.length() < newResults.length()) {
+        beginInsertRows(QModelIndex(), results.length(), newResults.length()-1);
+
+        while(results.length() < newResults.length())
+            results.append(newResults[results.length()]);
+
+        endInsertRows();
+
+    } else if(results.length() > newResults.length()) {
+        beginRemoveRows(QModelIndex(), newResults.length(), results.length()-1);
+
+        while(results.length() > newResults.length())
+            results.removeLast();
+
+        endRemoveRows();
+    }
+
+
+}
+
+QString Sql::getQuery() {
+    return query;
+}
+bool Sql::hasErrored() {
+    return errored;
+}
+int Sql::rowCount(const QModelIndex &parent) const {
+    return results.length();
+}
+/*int Sql::columnCount(const QModelIndex &parent) const {
+    return 1;
+}*/
+QVariant Sql::data(const QModelIndex &index, int role) const {
+
+    QVariant value;
+    if(role > Qt::UserRole) {
+        int column = role - Qt::UserRole - 1;
+        int row = index.row();
+        if(row < results.length())
+            value = results[row].value(column);
+    }
+    return value;
+}
+
+QHash<int, QByteArray> Sql::roleNames() const {
+    return fieldNames;
+}
+
+void Sql::updateFieldNames(QSqlRecord record) {
+    fieldNames.clear();
+    for( int i = 0; i < record.count(); i ++) {
+        fieldNames.insert(Qt::UserRole + i + 1, "sql_" + record.fieldName(i).toUtf8());
+    }
+}
+
+void Sql::reset() {
+    beginResetModel();
+    fieldNames.clear();
+    results.clear();
+    endResetModel();
 }
 
 void Sql::reload(){
     setQuery(getQuery());
 }
 
-QString Sql::getQuery() {
-    return query;
-}
-
-bool Sql::hasErrored() {
-    return lastError().type() != QSqlError::NoError;
-}
-
-void Sql::generateRoleNames() {
-   m_roleNames.clear();
-   for( int i = 0; i < record().count(); i ++) {
-       m_roleNames.insert(Qt::UserRole + i + 1, "sql_" + record().fieldName(i).toUtf8());
-   }
-   m_roleNames.insert(Qt::DisplayRole, "display");
-}
-
-QVariant Sql::data(const QModelIndex &index, int role) const {
-    QVariant value;
-    if(role < Qt::UserRole) {
-        value = QSqlQueryModel::data(index, role);
-    } else {
-        int columnIdx = role - Qt::UserRole - 1;
-        QModelIndex modelIndex = this->index(index.row(), columnIdx);
-        value = QSqlQueryModel::data(modelIndex, Qt::DisplayRole);
-    }
-    return value;
-}
-
-void Sql::refresh(const QString& name, const QVariant& payload) {
-    if(!reload_timer->isActive()) {
-        reload_timer->start(100 + (QRandomGenerator::global()->generate() % 100));
+void Sql::dbChanged(const QString& name, const QVariant& payload) {
+    if(!reloadTimer->isActive()) {
+        reloadTimer->start(100 + (QRandomGenerator::global()->generate() % 100));
     }
 }

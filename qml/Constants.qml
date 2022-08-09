@@ -14,37 +14,35 @@ QtObject {
     readonly property var red: "#ba0000"
     readonly property var green: "green"
 
-    function file_query(file) {
-        return "SELECT * FROM files WHERE parent = " + file + " ORDER BY file;"
+    function parent_query(file) {
+        return "SELECT * FROM nodes INNER JOIN files ON nodes.file = files.file WHERE parent = " + file + " ORDER BY node;"
     }
 
-    function file_search_query(file, query) {
+    function search_query(node, query) {
         query = util.processQuery(query)
-
-        var file_query = "SELECT * FROM files"
-
-        if(file !== 0) {
-            file_query += " WHERE parent = " + file
-        }
 
         if(query === "")
             query = "probablywontmatchrightsurelythiswillnevermatch"
 
-        var tags_query = "SELECT rowid FROM search WHERE tags MATCH '" + query + "'"
+        query = "SELECT nodes.*, files.* FROM (SELECT rowid FROM search WHERE tags MATCH '" + query + "') JOIN nodes ON rowid = nodes.node JOIN files ON nodes.file = files.file";
 
-        return "SELECT file, parent, path, type, tags, children FROM (" + tags_query + ") as 't' JOIN (" + file_query + ") as 'f' ON t.rowid == f.file ORDER BY file;"
+        if(node !== 0) {
+            query += " WHERE parent = " + node
+        }
+
+        return query + ";"
     }
 
-    function file_children_query(file, children) {
+    function children_query(node, children) {
         if(children === 0) {
-            return "SELECT * FROM files as a WHERE file = " + file + " ORDER BY file;"
+            return "SELECT * FROM nodes INNER JOIN files ON nodes.file = files.file WHERE node = " + node + " ORDER BY node;"
         } else {
-            return "SELECT * FROM files as a WHERE parent = " + file + " ORDER BY file;"
+            return "SELECT * FROM nodes INNER JOIN files ON nodes.file = files.file WHERE parent = " + node + " ORDER BY node;"
         }
     }
 
-    function file_tags_query(file) {
-        return "SELECT * FROM (SELECT tag FROM tags WHERE file = " + file + ") as 'tags' INNER JOIN tag_count ON tags.tag = tag_count.tag;"
+    function node_tags_query(node) {
+        return "SELECT * FROM (SELECT tag FROM tags WHERE node = " + node + ") as 'tags' INNER JOIN tag_count ON tags.tag = tag_count.tag;"
     }
 
     function tags_query(match, limit) {

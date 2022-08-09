@@ -37,15 +37,18 @@ GridView {
     }
 
     delegate: Thumb {
+        id: thumb
         width: cellWidth-padding
         height: cellHeight-padding
 
         source: sql_path
         type: sql_type
-        file: sql_file
+        node: sql_node
         count: sql_children
+        property var tags: sql_tags
+        property var tIndex: index
 
-        selected: thumbView.currentIndex === index
+        selected: thumbView.currentIndex === tIndex
 
         onSelect: {
             thumbView.currentIndex = index
@@ -58,5 +61,24 @@ GridView {
         onOpen: {
             thumbView.open()
         }
+
+        onNodeChanged: {
+            if(selected && tIndex !== -1) {
+                activeChanged(thumb.node, thumb.tags)
+            }
+        }
+
+        onSelectedChanged: {
+            if(selected && tIndex !== -1) {
+                activeChanged(thumb.node, thumb.tags)
+            }
+        }
+
+        Component.onCompleted: {
+            if(thumbView.currentIndex === tIndex) {
+                activeChanged(thumb.node, thumb.tags)
+            }
+        }
+
     }
 }

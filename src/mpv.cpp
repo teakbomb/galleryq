@@ -10,13 +10,18 @@ MpvSingleton::MpvSingleton() {
     loop->start();
 
     mpv_set_option_string(mpv, "input-default-bindings", "yes");
+    mpv_set_option_string(mpv, "scale", "nearest");
+    mpv_set_option_string(mpv, "dscale", "mitchell");
     mpv_set_option_string(mpv, "osc", "yes");
     mpv_set_option_string(mpv, "loop", "yes");
     mpv_set_option_string(mpv, "video-timing-offset", "0");
     mpv_set_option_string(mpv, "script-opts", "osc-idlescreen=no,osc-deadzonesize=1");
+    mpv_set_option_string(mpv, "hwdec", "auto");
 
     mpv_observe_property(mpv, 1, "width", MPV_FORMAT_INT64);
     mpv_observe_property(mpv, 2, "height", MPV_FORMAT_INT64);
+
+    mpv_set_option_string(mpv, "osc", "yes");
 
     if (mpv_initialize(mpv) < 0)
         throw std::runtime_error("could not initialize mpv context");

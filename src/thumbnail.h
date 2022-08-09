@@ -39,7 +39,7 @@ signals:
 public:
     ThumbnailResponseRunnable(const QString &path, const QString &cached, const QSize &size);
     void run() override;
-
+    static void createThumbnail(const QString &path, const QString &thumbnail, const QSize &size);
 private:
     QString m_path;
     QString m_cached;
@@ -58,13 +58,12 @@ public:
 class ThumbnailProvider : public QQuickAsyncImageProvider
 {
 public:
-    ThumbnailProvider(const QString &thumbnail_store);
+    ThumbnailProvider();
     QQuickImageResponse *requestImageResponse(const QString &path, const QSize &size) override;
-
+    static QString getThumbnailPath(QString path, QSize size);
 private:
-    QString m_store;
     QThreadPool pool;
-    QString checksum(QString s);
+    static QString checksum(QString s);
 };
 
 #endif // THUMBNAIL_H

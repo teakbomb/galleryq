@@ -2,6 +2,7 @@ QT += qml quick svg sql \
     widgets
 
 SOURCES += \
+        src/config.cpp \
         src/main.cpp \
         src/model.cpp \
         src/mpv.cpp \
@@ -26,6 +27,7 @@ unix: LIBS += -lmpv
 unix: INCLUDEPATH += /usr/include
 
 HEADERS += \
+    src/config.h \
     src/model.h \
     src/mpv.h \
     src/mpv_qthelper.h \

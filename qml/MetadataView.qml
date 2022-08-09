@@ -5,13 +5,13 @@ import gallery.constants 1.0
 
 Rectangle {
     color: Constants.bg1
-    property var file
+    property var node
 
     ListView {
         anchors.fill: parent
         id: tagsView
         model: Sql {
-            query: Constants.file_tags_query(file)
+            query: Constants.node_tags_query(node)
         }
 
         spacing: 3
@@ -19,13 +19,14 @@ Rectangle {
             height: 7
         }
 
+        reuseItems: true
+
         delegate: Item {
             x: 2
             width: tagsView.width-10
             height: 20
 
             property int tag_status: tagStatus(sql_tag)
-
 
             MouseArea {
                 id: mouse

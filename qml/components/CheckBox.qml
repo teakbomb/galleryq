@@ -6,15 +6,14 @@ import gallery.constants 1.0
 Rectangle {
     id: button
     color: Constants.grey1
-    property var icon
     property var iconColor: Constants.grey3
     property var iconHoverColor: "white"
     property bool disabled: false
-    property bool working: false
-    property var inset: 10
     property var tooltip: ""
 
-    signal pressed();
+    property bool checked: false
+
+    signal toggled();
     signal enter();
     signal leave();
 
@@ -46,7 +45,7 @@ Rectangle {
 
     Image {
         id: img
-        source: icon
+        source: checked ? ""
         width: parent.width - inset
         height: width
         sourceSize: Qt.size(parent.width, parent.height)
